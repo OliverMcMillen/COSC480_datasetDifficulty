@@ -6,8 +6,15 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import argparse
+import multiprocessing
+from multiprocessing import Pool
+import time 
 
+# NUM_CORES = multiprocessing.cpu_count()  # Detect available CPU cores
+# torch.set_num_threads(NUM_CORES) 
+# os.environ["OMP_NUM_THREADS"] = str(NUM_CORES) 
 parser = argparse.ArgumentParser()
+
 
 
 def v_entropy(data_fn, model, tokenizer, input_key='sentence1', batch_size=100):
@@ -34,8 +41,9 @@ def v_entropy(data_fn, model, tokenizer, input_key='sentence1', batch_size=100):
         tokenizer.pad_token = tokenizer.eos_token
         model = AutoModelForSequenceClassification.from_pretrained(model, pad_token_id=tokenizer.eos_token_id)
 
-    classifier = pipeline('text-classification', model=model, tokenizer=tokenizer, return_all_scores=True, device=0)
-    data = pd.read_csv(data_fn)
+    # torch.set_num_threads(NUM_CORES)
+    classifier = pipeline('text-classification', model=model, tokenizer=tokenizer, return_all_scores=True, device=-1)
+    data = pd.read_csv(data_fn).sample(frac=0.1, random_state=42) 
     
     entropies = []
     correct = []
@@ -81,13 +89,23 @@ def v_info(data_fn, model, null_data_fn, null_model, tokenizer, out_fn="", input
         Pandas DataFrame of the data in data_fn, with the three additional 
         columns specified above.
     """
-    data = pd.read_csv(data_fn)
+    data = pd.read_csv(data_fn).sample(frac=0.1, random_state=42) 
+    print("🔥 Starting null model V-entropy computation...")
+    start_time = time.time()
     data['H_yb'], _, _ = v_entropy(null_data_fn, null_model, tokenizer, input_key=input_key) 
+    print(f"✅ Null model computation finished in {time.time() - start_time:.2f} seconds")
+
+    print("🔥 Starting main model V-entropy computation...")
+    start_time = time.time()
     data['H_yx'], data['correct_yx'], data['predicted_label'] = v_entropy(data_fn, model, tokenizer, input_key=input_key)
+    print(f"✅ Main model computation finished in {time.time() - start_time:.2f} seconds")
+
     data['PVI'] = data['H_yb'] - data['H_yx']
 
     if out_fn:
+        print("🔥 Saving results...")
         data.to_csv(out_fn)
+        print("✅ Results saved!")
 
     return data
 
@@ -131,7 +149,7 @@ def find_annotation_artefacts(data_fn, model, tokenizer, input_key='sentence1', 
     entropies, _ = v_entropy(data_fn, model, tokenizer, input_key=input_key)
 
     print("Calculating token-wise delta for conditional entropies ...")
-    classifier = pipeline('text-classification', model=model, tokenizer=tokenizer, return_all_scores=True, device=0)
+    classifier = pipeline('text-classification', model=model, tokenizer=tokenizer, return_all_scores=True, device=-1)
 
     for i in tqdm(range(len(data))):
         example = data.iloc[i]
@@ -190,39 +208,39 @@ if __name__ == "__main__":
     DATA_DIR = args.data_dir
     MODEL_DIR = args.model_dir
 
-    for tokenizer in ['bert-base-cased', 'facebook/bart-base', 'gpt2', 'distilbert-base-uncased', 'roberta-large']:
+    for tokenizer in ['xlm-roberta-base']:
         model_name = tokenizer.replace('/', '-')
 
-        # MultiNLI
-        for suffix in ['validation']:
-            print(model_name, 'multinli', suffix)
-            v_info(f"data/multinli_{suffix}_std.csv", f"{MODEL_DIR}/{model_name}_multinli_std", f"data/multinli_{suffix}_null.csv",
-                f"{MODEL_DIR}/{model_name}_multinli_null", tokenizer, out_fn=f"PVI/{model_name}_multinli_{suffix}_std.csv")
+        # # MultiNLI
+        # for suffix in ['validation']:
+        #     print(model_name, 'multinli', suffix)
+        #     v_info(f"data/multinli_{suffix}_std.csv", f"{MODEL_DIR}/{model_name}_multinli_std", f"data/multinli_{suffix}_null.csv",
+        #         f"{MODEL_DIR}/{model_name}_multinli_null", tokenizer, out_fn=f"PVI/{model_name}_multinli_{suffix}_std.csv")
 
-        # CoLA
-        for suffix in ['train', 'id_dev']:
-            for epoch in [1,2,3,5]:
-                print(model_name, 'cola', suffix)
-                v_info(f"data/cola_{suffix}_std.csv", f"{MODEL_DIR}/{model_name}_cola_std{epoch}",
-                  f"data/cola_{suffix}_null.csv", f"{MODEL_DIR}/{model_name}_cola_null", tokenizer,
-                  out_fn=f"PVI/{model_name}_cola_{suffix}_std{epoch}.csv")
+        # # CoLA
+        # for suffix in ['train', 'id_dev']:
+        #     for epoch in [1,2,3,5]:
+        #         print(model_name, 'cola', suffix)
+        #         v_info(f"data/cola_{suffix}_std.csv", f"{MODEL_DIR}/{model_name}_cola_std{epoch}",
+        #           f"data/cola_{suffix}_null.csv", f"{MODEL_DIR}/{model_name}_cola_null", tokenizer,
+        #           out_fn=f"PVI/{model_name}_cola_{suffix}_std{epoch}.csv")
        
-        # DWMW
-        for experiment in ['sentiment', 'std', 'bad_vocab']:
-            print(model_name, 'dwmw', experiment)
-            v_info(f"data/dwmw_{experiment}.csv", f"{MODEL_DIR}/{model_name}_dwmw_{experiment}", f"data/dwmw_null.csv", f"{MODEL_DIR}/{model_name}_dwmw_null",
-                    tokenizer, out_fn=f"PVI/{model_name}_dwmw_{experiment}.csv")
+        # # DWMW
+        # for experiment in ['sentiment', 'std', 'bad_vocab']:
+        #     print(model_name, 'dwmw', experiment)
+        #     v_info(f"data/dwmw_{experiment}.csv", f"{MODEL_DIR}/{model_name}_dwmw_{experiment}", f"data/dwmw_null.csv", f"{MODEL_DIR}/{model_name}_dwmw_null",
+        #             tokenizer, out_fn=f"PVI/{model_name}_dwmw_{experiment}.csv")
 
-        v_info(f"data/dwmw_sentiment_vocab.csv", f"{MODEL_DIR}/{model_name}_dwmw_sentiment_vocab", f"data/dwmw_sentiment.csv", f"{MODEL_DIR}/{model_name}_dwmw_sentiment",
-            tokenizer, out_fn=f"PVI/{model_name}_dwmw_sentiment_vocab.csv")
+        # v_info(f"data/dwmw_sentiment_vocab.csv", f"{MODEL_DIR}/{model_name}_dwmw_sentiment_vocab", f"data/dwmw_sentiment.csv", f"{MODEL_DIR}/{model_name}_dwmw_sentiment",
+        #     tokenizer, out_fn=f"PVI/{model_name}_dwmw_sentiment_vocab.csv")
         
         # SNLI
         experiments = [
             ("snli_train_std.csv", "snli_std"),
-            ("snli_train_std.csv", "snli_std2"),
-            ("snli_train_std.csv", "snli_std3"),
-            ("snli_train_std.csv", "snli_std5"),
-            ("snli_train_std.csv", "snli_std10"),
+            # ("snli_train_std.csv", "snli_std2"),
+            # ("snli_train_std.csv", "snli_std3"),
+            # ("snli_train_std.csv", "snli_std5"),
+            # ("snli_train_std.csv", "snli_std10"),
         ]
 
         for side_data, side_model in experiments:
@@ -233,13 +251,13 @@ if __name__ == "__main__":
       
         experiments = [
             ("snli_test_std.csv", "snli_std"),
-            ("snli_test_std.csv", "snli_std2"),
-            ("snli_test_std.csv", "snli_std3"),
-            ("snli_test_std.csv", "snli_std5"),
-            ("snli_test_std.csv", "snli_std10"),
-            ("snli_test_premise.csv", "snli_premise"),
-            ("snli_test_hypothesis.csv", "snli_hypothesis"),
-            ("snli_test_shuffled.csv", "snli_shuffled"),
+            # ("snli_test_std.csv", "snli_std2"),
+            # ("snli_test_std.csv", "snli_std3"),
+            # ("snli_test_std.csv", "snli_std5"),
+            # ("snli_test_std.csv", "snli_std10"),
+            # ("snli_test_premise.csv", "snli_premise"),
+            # ("snli_test_hypothesis.csv", "snli_hypothesis"),
+            # ("snli_test_shuffled.csv", "snli_shuffled"),
         ]
 
         for side_data, side_model in experiments:

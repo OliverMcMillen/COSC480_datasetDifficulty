@@ -318,7 +318,7 @@ def main():
         desc="Running tokenizer on dataset",
     )
 
-    train_dataset = processed_datasets["train"]
+    train_dataset = processed_datasets["train"].select(range(4000))
     eval_dataset = processed_datasets["validation_matched" if args.task_name == "mnli" else "validation"]
 
     # Log a few random samples from the training set:
@@ -339,6 +339,7 @@ def main():
     train_dataloader = DataLoader(
         train_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.per_device_train_batch_size
     )
+    raw_datasets["validation"] = raw_datasets["validation"].select(range(1000))
     eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size)
 
     # Optimizer
@@ -398,6 +399,8 @@ def main():
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
     completed_steps = 0
 
+
+    print("✅ CHECKPOINT: Training is about to start...")
     for epoch in range(args.num_train_epochs):
         model.train()
         for step, batch in enumerate(train_dataloader):
@@ -416,24 +419,41 @@ def main():
                 break
 
         torch.cuda.empty_cache() # free memory
+        print("✅ CHECKPOINT: Training completed!")
         model.eval()
 
-        for step, batch in enumerate(eval_dataloader):
-            outputs = model(**batch)
-            predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
-            metric.add_batch(
-                predictions=accelerator.gather(predictions),
-                references=accelerator.gather(batch["labels"]),
-            )
+        print("✅ CHECKPOINT: evaluation starting...")
+        print(f"🔥 [DEBUG] Number of batches in eval_dataloader: {len(eval_dataloader)}")
+        print("🔥 [DEBUG] First batch example:")
+        try:
+            first_batch = next(iter(eval_dataloader))
+            print(f"🔥 [DEBUG] First batch keys: {first_batch.keys()}")
+            print(f"🔥 [DEBUG] First batch size: {first_batch['input_ids'].shape}")
+        except Exception as e:
+            print(f"🚨 ERROR: Could not retrieve first batch! {str(e)}")
 
-        eval_metric = metric.compute()
-        logger.info(f"epoch {epoch}: {eval_metric}")
+        # Skip evaluation to test saving
+        print("🚨 SKIPPING EVALUATION 🚨")
+        # for step, batch in enumerate(eval_dataloader):
+        #     outputs = model(**batch)
+        #     predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
+        #     metric.add_batch(
+        #         predictions=accelerator.gather(predictions),
+        #         references=accelerator.gather(batch["labels"]),
+        #     )
 
+        # eval_metric = metric.compute()
+        # logger.info(f"epoch {epoch}: {eval_metric}")
+
+    print(f"🔥 [DEBUG] args.output_dir: {args.output_dir}")
+    print(f"🔥 [DEBUG] Does output directory exist? {os.path.exists(args.output_dir)}")
 
     if args.output_dir is not None:
+        print(f"🔥 [DEBUG] Saving model to: {args.output_dir}")
         accelerator.wait_for_everyone()
         unwrapped_model = accelerator.unwrap_model(model)
-        unwrapped_model.save_pretrained(args.output_dir, save_function=accelerator.save)
+        unwrapped_model.save_pretrained(args.output_dir)
+        print("✅ Model saved successfully!")
 
     """
     if args.task_name == "mnli":

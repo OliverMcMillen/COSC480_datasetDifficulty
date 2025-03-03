@@ -351,7 +351,7 @@ class COLAShuffleTransformation(COLATransformation):
         """
         Randomly reorder the words in the hypothesis and premise.
         """
-        sentence = self.tokenizer.tokenize(example['sentence1'])
+        sentence = self.tokenizer.tokenize(str(example['sentence1']) if pd.notna(example['sentence1']) else "")
         random.shuffle(sentence)
         example['sentence1'] = self.tokenizer.convert_tokens_to_string(sentence)
         return example
